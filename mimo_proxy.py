@@ -20,13 +20,13 @@ import uvicorn
 app = FastAPI(title="MiMo Compatibility Proxy")
 
 MIMO_API_BASE = "https://token-plan-cn.xiaomimimo.com"
-PROXY_PORT = 8000
+PROXY_PORT = 16413
 
 
 def kill_process_on_port(port):
     """检测并释放指定端口的进程"""
     print(f"[CHECK] Checking port {port}...")
-    
+
     if platform.system() == "Windows":
         try:
             result = subprocess.run(
@@ -35,48 +35,48 @@ def kill_process_on_port(port):
                 text=True,
                 encoding='gbk'
             )
-            
+
             lines = result.stdout.split('\n')
             pids = set()
-            
+
             for line in lines:
                 if f':{port}' in line and 'LISTENING' in line:
                     parts = line.split()
                     if len(parts) >= 5:
                         pid = parts[-1]
                         pids.add(pid)
-            
+
             if not pids:
                 print(f"[OK] Port {port} is available")
                 return True
-            
+
             print(f"[WARN] Port {port} is occupied by PIDs: {', '.join(pids)}")
-            
+
             for pid in pids:
                 try:
                     print(f"[KILL] Terminating process {pid}...")
-                    subprocess.run(['taskkill', '/F', '/PID', pid], 
+                    subprocess.run(['taskkill', '/F', '/PID', pid],
                                  capture_output=True, check=True)
                     print(f"[OK] Process {pid} terminated")
                 except subprocess.CalledProcessError as e:
                     print(f"[ERROR] Failed to kill process {pid}: {e}")
                     return False
-            
+
             import time
             time.sleep(1)
-            
+
             result = subprocess.run(
                 ['netstat', '-ano'],
                 capture_output=True,
                 text=True,
                 encoding='gbk'
             )
-            
+
             still_occupied = any(
                 f':{port}' in line and 'LISTENING' in line
                 for line in result.stdout.split('\n')
             )
-            
+
             if still_occupied:
                 print(f"[ERROR] Port {port} is still occupied")
                 return False
@@ -89,13 +89,29 @@ def kill_process_on_port(port):
             return False
     
     else:
+        import socket
         try:
-            subprocess.run(['fuser', '-k', f'{port}/tcp'], 
-                         capture_output=True, check=True)
-            print(f"[OK] Port {port} released")
-            return True
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                s.settimeout(1)
+                result = s.connect_ex(('127.0.0.1', port))
+                if result != 0:
+                    print(f"[OK] Port {port} is available (not in use)")
+                    return True
+            print(f"[WARN] Port {port} is occupied, attempting to release...")
+            subprocess.run(['fuser', '-k', f'{port}/tcp'],
+                         capture_output=True)
+            import time
+            time.sleep(1)
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                s.settimeout(1)
+                result = s.connect_ex(('127.0.0.1', port))
+                if result != 0:
+                    print(f"[OK] Port {port} released successfully")
+                    return True
+                print(f"[ERROR] Port {port} is still occupied")
+                return False
         except Exception as e:
-            print(f"[ERROR] Failed to release port: {e}")
+            print(f"[ERROR] Failed to check/release port: {e}")
             return False
 
 
